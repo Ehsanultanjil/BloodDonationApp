@@ -108,7 +108,12 @@ export class DonorService {
     });
 
     if (!response.ok) {
-      throw new Error('Failed to send blood request');
+      let message = 'Failed to send blood request';
+      try {
+        const err = await response.json();
+        if (err && err.message) message = err.message;
+      } catch {}
+      throw new Error(message);
     }
 
     return response.json();

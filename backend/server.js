@@ -586,8 +586,25 @@ app.get('/api/donor/search', authenticateToken, async (req, res) => {
     ]);
     const ratingMap = new Map(ratingAgg.map(r => [String(r._id), { avgRating: r.avgRating, ratingCount: r.ratingCount }]));
 
+    // Compute availability based on last completed donation
+    const latestCompleted = await BloodRequest.aggregate([
+      { $match: { donorId: { $in: donorIds }, status: 'completed' } },
+      { $sort: { updatedAt: -1 } },
+      { $group: { _id: '$donorId', lastCompletedAt: { $first: '$updatedAt' } } },
+    ]);
+    const lastCompletedMap = new Map(latestCompleted.map(r => [String(r._id), r.lastCompletedAt]));
+    const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+
     const result = donors.map(d => {
       const r = ratingMap.get(String(d._id));
+      const last = lastCompletedMap.get(String(d._id));
+      let nextAvailableAt = null;
+      if (last) {
+        const ts = new Date(last).getTime() + NINETY_DAYS_MS;
+        if (ts > Date.now()) {
+          nextAvailableAt = new Date(ts);
+        }
+      }
       return {
         _id: d._id,
         name: d.name,
@@ -598,6 +615,7 @@ app.get('/api/donor/search', authenticateToken, async (req, res) => {
         // average rating to one decimal, and count
         avgRating: r ? Math.round(r.avgRating * 10) / 10 : null,
         ratingCount: r ? r.ratingCount : 0,
+        nextAvailableAt,
       };
     });
 
@@ -618,6 +636,22 @@ app.post('/api/donor/request', authenticateToken, async (req, res) => {
     const donor = await Donor.findById(donorId);
     if (!donor) {
       return res.status(404).json({ message: 'Donor not found' });
+    }
+
+    // Block requests to donors who have donated within the last 90 days
+    const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+    const since = new Date(Date.now() - NINETY_DAYS_MS);
+    const recentCompleted = await BloodRequest.findOne({
+      donorId: donor._id,
+      status: 'completed',
+      updatedAt: { $gte: since },
+    }).sort({ updatedAt: -1 });
+    if (recentCompleted) {
+      const nextAvailableAt = new Date(recentCompleted.updatedAt.getTime() + NINETY_DAYS_MS);
+      return res.status(400).json({
+        message: 'This donor recently donated and is unavailable for 3 months',
+        nextAvailableAt,
+      });
     }
 
     // Prevent duplicate pending requests between same requester and donor

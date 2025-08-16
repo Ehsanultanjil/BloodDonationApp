@@ -22,6 +22,7 @@ interface Donor {
   phoneNumber: string;
   avgRating?: number | null;
   ratingCount?: number;
+  nextAvailableAt?: string | Date | null;
 }
 
 export default function SearchDonors() {
@@ -70,6 +71,12 @@ export default function SearchDonors() {
   };
 
   const sendBloodRequest = async (donor: Donor) => {
+    // If donor is unavailable, show info and return
+    const nextAt = donor.nextAvailableAt ? new Date(donor.nextAvailableAt) : null;
+    if (nextAt && nextAt.getTime() > Date.now()) {
+      Alert.alert('Unavailable', `This donor recently donated. Try again after ${nextAt.toLocaleDateString()}.`);
+      return;
+    }
     try {
       await DonorService.sendBloodRequest(donor._id);
       Alert.alert(
@@ -79,13 +86,16 @@ export default function SearchDonors() {
           { text: 'OK', onPress: () => router.push('/(tabs)/requests') }
         ]
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error('Request failed:', error);
-      Alert.alert('Error', 'Failed to send blood request');
+      Alert.alert('Error', error?.message || 'Failed to send blood request');
     }
   };
 
-  const renderDonor = ({ item }: { item: Donor }) => (
+  const renderDonor = ({ item }: { item: Donor }) => {
+    const nextAt = item.nextAvailableAt ? new Date(item.nextAvailableAt) : null;
+    const unavailable = !!nextAt && nextAt.getTime() > Date.now();
+    return (
     <View style={styles.donorCard}>
       <View style={styles.donorHeader}>
         <View style={styles.donorInfo}>
@@ -103,10 +113,14 @@ export default function SearchDonors() {
               {typeof item.ratingCount === 'number' && item.ratingCount > 0 ? `(${item.ratingCount})` : ''}
             </Text>
           </View>
+          {unavailable && (
+            <Text style={styles.unavailableText}>Unavailable until {nextAt?.toLocaleDateString()}</Text>
+          )}
         </View>
         <TouchableOpacity
-          style={styles.requestButton}
+          style={[styles.requestButton, unavailable && { backgroundColor: '#9CA3AF' }]}
           onPress={() => sendBloodRequest(item)}
+          disabled={unavailable}
         >
           <Send size={16} color="#FFFFFF" />
         </TouchableOpacity>
@@ -123,7 +137,7 @@ export default function SearchDonors() {
         </View>
       </View>
     </View>
-  );
+  ); };
 
   return (
     <View style={styles.container}>
@@ -450,5 +464,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
     paddingHorizontal: 4,
+  },
+  unavailableText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '600',
   },
 });
